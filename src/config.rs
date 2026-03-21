@@ -122,7 +122,7 @@ fn default_retry_count() -> u32 {
     2
 }
 fn default_keep_alive_value() -> String {
-    "-1".to_string()
+    "5m".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -398,9 +398,9 @@ mod tests {
     }
 
     #[test]
-    fn routing_default_keep_alive_is_negative_one() {
+    fn routing_default_keep_alive_is_5m() {
         let config: Config = serde_yaml::from_str("{}").unwrap();
-        assert_eq!(config.routing.default_keep_alive, "-1");
+        assert_eq!(config.routing.default_keep_alive, "5m");
     }
 
     #[test]

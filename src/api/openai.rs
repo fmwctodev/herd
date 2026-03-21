@@ -142,6 +142,16 @@ pub async fn chat_completions(
                     continue;
                 }
 
+                if matches!(r.status().as_u16(), 500 | 502 | 503) {
+                    tracing::warn!(
+                        "Backend {} returned {} for /v1/chat/completions — retrying on another backend",
+                        backend.name, r.status()
+                    );
+                    state.pool.mark_unhealthy(&backend.name).await;
+                    excluded.insert(backend.name.clone());
+                    continue;
+                }
+
                 state.pool.mark_healthy(&backend.name).await;
                 response = Some(r);
                 break;

@@ -51,6 +51,26 @@ impl AppState {
         self.config.read().await.clone()
     }
 
+    /// Reloads configuration from disk.
+    ///
+    /// **Reloaded (takes effect immediately):**
+    /// - Backends (added, removed, updated)
+    /// - Router strategy
+    /// - Routing timeout and retry count
+    /// - `routing.default_keep_alive`
+    ///
+    /// **NOT reloaded (requires restart):**
+    /// - `server.host`, `server.port`
+    /// - `server.rate_limit`
+    /// - `server.api_key`
+    /// - `observability.admin_api` (admin API enable/disable)
+    /// - `observability.metrics` (metrics route enable/disable)
+    /// - `model_warmer.interval_secs`
+    /// - `observability.log_retention_days`, `log_max_size_mb`, `log_max_files`
+    /// - `circuit_breaker.*`
+    ///
+    /// Admin CRUD operations (`/admin/backends`) mutate the live pool only and are
+    /// ephemeral — a reload or restart discards those changes in favor of the config file.
     pub async fn reload_config(&self) -> anyhow::Result<String> {
         let path = self
             .config_path
@@ -58,6 +78,41 @@ impl AppState {
             .ok_or_else(|| anyhow::anyhow!("No config file path (started with CLI args)"))?;
 
         let new_config = Config::from_file(path)?;
+        new_config.validate()?;
+
+        // Detect settings that changed but require a restart to take effect
+        let mut restart_warnings: Vec<String> = Vec::new();
+        {
+            let old = self.config.read().await;
+            if old.server.host != new_config.server.host || old.server.port != new_config.server.port {
+                restart_warnings.push("server.host/port".to_string());
+            }
+            if old.server.rate_limit != new_config.server.rate_limit {
+                restart_warnings.push("server.rate_limit".to_string());
+            }
+            if old.server.api_key != new_config.server.api_key {
+                restart_warnings.push("server.api_key".to_string());
+            }
+            if old.observability.admin_api != new_config.observability.admin_api {
+                restart_warnings.push("observability.admin_api".to_string());
+            }
+            if old.observability.metrics != new_config.observability.metrics {
+                restart_warnings.push("observability.metrics".to_string());
+            }
+            if old.model_warmer.interval_secs != new_config.model_warmer.interval_secs {
+                restart_warnings.push("model_warmer.interval_secs".to_string());
+            }
+            if old.observability.log_retention_days != new_config.observability.log_retention_days
+                || old.observability.log_max_size_mb != new_config.observability.log_max_size_mb
+                || old.observability.log_max_files != new_config.observability.log_max_files
+            {
+                restart_warnings.push("log rotation settings".to_string());
+            }
+        } // read lock dropped here
+
+        for w in &restart_warnings {
+            tracing::warn!("Reload: {} changed but requires restart to take effect", w);
+        }
 
         // Sync backends: remove deleted, add new, update existing
         let existing = self.pool.all().await;
@@ -97,11 +152,17 @@ impl AppState {
             .store(new_config.routing.retry_count, Ordering::Relaxed);
         *self.config.write().await = new_config.clone();
 
-        let msg = format!(
+        let mut msg = format!(
             "Reloaded: {} backends, strategy={:?}",
             new_config.backends.len(),
             new_config.routing.strategy
         );
+        if !restart_warnings.is_empty() {
+            msg.push_str(&format!(
+                ". Requires restart: {}",
+                restart_warnings.join(", ")
+            ));
+        }
         tracing::info!("{}", msg);
         Ok(msg)
     }
@@ -660,10 +721,9 @@ async fn proxy_handler(
     }
 
     let duration = start.elapsed();
-    let status = if response.is_some() {
-        "success"
-    } else {
-        "error"
+    let status = match &response {
+        Some(r) if r.status().is_success() => "success",
+        _ => "error",
     };
 
     // Log request
