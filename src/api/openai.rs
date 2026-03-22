@@ -176,6 +176,8 @@ pub async fn chat_completions(
                 status: "error".to_string(),
                 path: "/v1/chat/completions".to_string(),
                 request_id: Some(request_id.clone()),
+                tier: None,
+                classified_by: None,
             };
             state
                 .metrics
@@ -205,6 +207,8 @@ pub async fn chat_completions(
         status: status.to_string(),
         path: "/v1/chat/completions".to_string(),
         request_id: Some(request_id.clone()),
+        tier: None,
+        classified_by: None,
     };
     state
         .metrics

@@ -154,6 +154,20 @@ GET /metrics
 Standard Prometheus exposition format with backend gauges, request counters,
 and latency histograms.
 
+## Task Classification
+
+Herd can automatically classify requests by complexity tier when no explicit model is specified.
+
+**Headers:**
+- `X-Herd-Tier` (response) — tier name assigned by classifier (`heavy`, `standard`, `lightweight`)
+
+**Behavior:**
+- Requests with an explicit `model` field → classifier skipped
+- Requests with `X-Herd-Tags` header → classifier skipped
+- No model/tags → classifier runs keyword matching → assigns tier → injects model
+
+**Configuration:** See `task_classifier` section in `herd.yaml`
+
 ## Headers You Should Know
 
 ### X-Herd-Tags (Request Routing)

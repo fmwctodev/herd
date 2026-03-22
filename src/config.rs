@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -23,6 +24,9 @@ pub struct Config {
 
     #[serde(default)]
     pub model_warmer: ModelWarmerConfig,
+
+    #[serde(default)]
+    pub task_classifier: TaskClassifierConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,6 +270,47 @@ const DEPRECATED_KEYS: &[(&str, &str)] = &[
     ("default_model", "Config key 'default_model' is no longer supported (removed in v0.4.3). Use 'hot_models' instead. This setting has no effect."),
     ("idle_timeout_minutes", "Config key 'idle_timeout_minutes' is no longer supported (removed in v0.4.3). This setting has no effect."),
 ];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskClassifierConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    #[serde(default = "default_classifier_strategy")]
+    pub strategy: String,
+
+    #[serde(default = "default_classifier_tier")]
+    pub default_tier: String,
+
+    #[serde(default)]
+    pub tiers: HashMap<String, TierConfig>,
+}
+
+impl Default for TaskClassifierConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            strategy: default_classifier_strategy(),
+            default_tier: default_classifier_tier(),
+            tiers: HashMap::new(),
+        }
+    }
+}
+
+fn default_classifier_strategy() -> String {
+    "keyword".to_string()
+}
+
+fn default_classifier_tier() -> String {
+    "standard".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TierConfig {
+    #[serde(default)]
+    pub keywords: Vec<String>,
+    pub model: String,
+}
 
 impl Config {
     pub fn from_file(path: &Path) -> Result<Self> {

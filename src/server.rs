@@ -359,10 +359,20 @@ impl Server {
         // Clone state for file watcher before it's consumed by with_state()
         let watcher_state = state.clone();
 
+        // Task classifier middleware (only if enabled)
+        let classifier_enabled = self.config.task_classifier.enabled;
+        if classifier_enabled {
+            tracing::info!(
+                "Task classifier enabled (strategy: {})",
+                self.config.task_classifier.strategy
+            );
+        }
+
         // Proxy (catch-all) + middleware layers
         let app = if self.config.server.rate_limit > 0 {
             let limiter = Arc::new(RateLimiter::new(self.config.server.rate_limit));
-            app.fallback(proxy_handler)
+            let mut app = app
+                .fallback(proxy_handler)
                 .layer(tower::ServiceBuilder::new().layer(TraceLayer::new_for_http()))
                 .layer(axum::middleware::from_fn(
                     move |req, next: axum::middleware::Next| {
@@ -375,12 +385,25 @@ impl Server {
                             }
                         }
                     },
-                ))
-                .with_state(state)
+                ));
+            if classifier_enabled {
+                app = app.layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::classifier::classify_task,
+                ));
+            }
+            app.with_state(state)
         } else {
-            app.fallback(proxy_handler)
-                .layer(tower::ServiceBuilder::new().layer(TraceLayer::new_for_http()))
-                .with_state(state)
+            let mut app = app
+                .fallback(proxy_handler)
+                .layer(tower::ServiceBuilder::new().layer(TraceLayer::new_for_http()));
+            if classifier_enabled {
+                app = app.layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::classifier::classify_task,
+                ));
+            }
+            app.with_state(state)
         };
 
         // Start config file watcher (polls every 30s)
@@ -595,8 +618,9 @@ async fn proxy_handler(
     let method = reqwest::Method::from_bytes(request.method().as_str().as_bytes())
         .unwrap_or(reqwest::Method::POST);
 
-    // Collect request headers before consuming body
+    // Collect request headers and extensions before consuming body
     let mut headers = request.headers().clone();
+    let extensions = request.extensions().clone();
 
     // Get or generate correlation ID
     let request_id = headers
@@ -726,6 +750,10 @@ async fn proxy_handler(
         _ => "error",
     };
 
+    // Check for classification result from the classifier middleware
+    let classification = extensions
+        .get::<crate::classifier::ClassificationResult>();
+
     // Log request
     let log = RequestLog {
         timestamp: chrono::Utc::now().timestamp(),
@@ -735,6 +763,8 @@ async fn proxy_handler(
         status: status.to_string(),
         path: path.clone(),
         request_id: Some(request_id.clone()),
+        tier: classification.map(|c| c.tier.clone()),
+        classified_by: classification.map(|c| c.classified_by.clone()),
     };
 
     state

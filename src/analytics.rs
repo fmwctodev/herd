@@ -16,6 +16,10 @@ pub struct RequestLog {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classified_by: Option<String>,
 }
 
 pub struct Analytics {
@@ -260,6 +264,8 @@ mod tests {
             status: "success".into(),
             path: "/api/generate".into(),
             request_id: Some("abc-123".into()),
+            tier: None,
+            classified_by: None,
         };
         let json = serde_json::to_string(&log).unwrap();
         assert!(json.contains("abc-123"));
@@ -275,6 +281,8 @@ mod tests {
             status: "success".into(),
             path: "/test".into(),
             request_id: None,
+            tier: None,
+            classified_by: None,
         };
         let json = serde_json::to_string(&log).unwrap();
         assert!(!json.contains("request_id"));

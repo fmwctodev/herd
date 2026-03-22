@@ -1,5 +1,6 @@
 pub mod api;
 pub mod backend;
+pub mod classifier;
 pub mod config;
 pub mod router;
 pub mod server;

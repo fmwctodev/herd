@@ -33,6 +33,25 @@ model_warmer:
   interval_secs: 240             # Seconds between keep-alive pings (default: 240, min: 10).
                                  # Must be shorter than Ollama's eviction window (default 5 min).
 
+# ── Task Classifier ────────────────────────────────────────────────
+# Automatically classify requests by complexity when no model is specified.
+# Off by default — zero overhead when disabled.
+#
+# task_classifier:
+#   enabled: false
+#   strategy: "keyword"              # Only "keyword" supported for now
+#   default_tier: "standard"         # Tier used when no keywords match
+#   tiers:
+#     heavy:
+#       keywords: ["analyze", "architect", "debug complex", "design system", "reason about", "compare tradeoffs", "explain why", "review this code"]
+#       model: "qwen2.5:32b-instruct"
+#     standard:
+#       keywords: ["summarize", "generate", "write function", "convert", "create template", "format"]
+#       model: "qwen2.5:14b-instruct"
+#     lightweight:
+#       keywords: ["heartbeat", "ping", "status", "hello", "lookup", "define", "quick check"]
+#       model: "llama3.2:3b"
+
 # === BACKENDS ===
 
 backends:
