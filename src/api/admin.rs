@@ -33,6 +33,9 @@ pub struct UpdateBackendRequest {
     pub model_filter: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// Manual VRAM override in MB. Overrides auto-detected value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vram_override_mb: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -168,6 +171,14 @@ pub async fn update_backend(
     }
 
     state.pool.update(backend.clone()).await;
+
+    if let Some(vram_mb) = req.vram_override_mb {
+        state.pool.set_vram(&name, vram_mb).await;
+        // Re-fetch so the response reflects the override
+        backend = state.pool.get(&name).await.ok_or_else(|| {
+            (StatusCode::NOT_FOUND, format!("Backend '{}' not found", name))
+        })?;
+    }
 
     tracing::info!("Updated backend: {}", name);
     Ok(Json(backend_to_response(&backend)))

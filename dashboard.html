@@ -361,6 +361,9 @@
                     </div>
                     <span id="update-badge" class="update-badge" style="display:none;"></span>
                 </div>
+                <input type="password" id="api-key-input" placeholder="API Key"
+                    style="width:120px; padding:4px 8px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:6px; color:#e2e8f0; font-size:12px;"
+                    onchange="setApiKey(this.value);">
                 <button class="btn" onclick="openAddModal()">+ Add Node</button>
             </div>
         </div>
@@ -605,6 +608,8 @@ Content-Type: application/json
             <input id="f-url" placeholder="http://100.x.x.x:11434">
             <label for="f-priority">Priority (higher = preferred)</label>
             <input id="f-priority" type="number" value="50" min="1" max="200">
+            <label for="f-vram">VRAM Override (GB, optional — overrides auto-detect)</label>
+            <input id="f-vram" type="number" step="0.1" min="1" placeholder="e.g. 24">
             <label for="f-filter">Model Filter (regex, optional)</label>
             <input id="f-filter" placeholder="e.g. llama|qwen">
 
@@ -665,6 +670,28 @@ Content-Type: application/json
         const savedTab = sessionStorage.getItem('herd-tab');
         if (savedTab) switchTab(savedTab);
 
+        // -- API Key Auth --
+        function getApiKey() {
+            return localStorage.getItem('herd-api-key') || '';
+        }
+
+        function setApiKey(key) {
+            localStorage.setItem('herd-api-key', key);
+        }
+
+        function authFetch(url, options = {}) {
+            const key = getApiKey();
+            if (key) {
+                options.headers = options.headers || {};
+                if (options.headers instanceof Headers) {
+                    options.headers.set('X-API-Key', key);
+                } else {
+                    options.headers['X-API-Key'] = key;
+                }
+            }
+            return fetch(url, options);
+        }
+
         // -- Helpers --
         function formatIdle(seconds) {
             if (seconds < 60) return `${seconds}s`;
@@ -703,14 +730,14 @@ Content-Type: application/json
             document.getElementById('f-name').disabled = false;
             document.getElementById('f-url').value = '';
             document.getElementById('f-priority').value = '50';
-
+            document.getElementById('f-vram').value = '';
             document.getElementById('f-filter').value = '';
             document.getElementById('model-mgmt').style.display = 'none';
             document.getElementById('modal-overlay').classList.add('active');
         }
 
         function openEditModal(name) {
-            fetch(`/admin/backends/${name}`).then(r => r.json()).then(b => {
+            authFetch(`/admin/backends/${name}`).then(r => r.json()).then(b => {
                 document.getElementById('modal-title').textContent = `Edit ${b.name}`;
                 document.getElementById('modal-mode').value = 'edit';
                 document.getElementById('modal-original-name').value = b.name;
@@ -718,6 +745,7 @@ Content-Type: application/json
                 document.getElementById('f-name').disabled = true;
                 document.getElementById('f-url').value = b.url;
                 document.getElementById('f-priority').value = b.priority;
+                document.getElementById('f-vram').value = b.vram_total_mb ? (b.vram_total_mb / 1024).toFixed(1) : '';
                 document.getElementById('f-filter').value = b.model_filter || '';
                 document.getElementById('model-mgmt').style.display = 'block';
                 document.getElementById('pull-progress').style.display = 'none';
@@ -738,7 +766,7 @@ Content-Type: application/json
             const listEl = document.getElementById('model-list');
             listEl.innerHTML = '<div style="font-size:12px; color:#64748b; padding:8px;">Loading models...</div>';
             try {
-                const res = await fetch(`/admin/backends/${name}/models`);
+                const res = await authFetch(`/admin/backends/${name}/models`);
                 const data = await res.json();
                 const models = data.models || [];
                 if (models.length === 0) {
@@ -775,7 +803,7 @@ Content-Type: application/json
         async function deleteModel(backend, model) {
             if (!confirm(`Delete ${model} from ${backend}?`)) return;
             try {
-                const res = await fetch(`/admin/backends/${backend}/models/${encodeURIComponent(model)}`, { method: 'DELETE' });
+                const res = await authFetch(`/admin/backends/${backend}/models/${encodeURIComponent(model)}`, { method: 'DELETE' });
                 if (res.ok) {
                     showToast(`Deleted ${model}`);
                     loadBackendModels(backend);
@@ -806,7 +834,7 @@ Content-Type: application/json
             barEl.style.width = '0%';
 
             try {
-                const res = await fetch(`/admin/backends/${name}/pull`, {
+                const res = await authFetch(`/admin/backends/${name}/pull`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({name: model}),
@@ -866,6 +894,8 @@ Content-Type: application/json
             const url = document.getElementById('f-url').value.trim();
             const priority = parseInt(document.getElementById('f-priority').value) || 50;
             const modelFilter = document.getElementById('f-filter').value.trim() || undefined;
+            const vramGb = parseFloat(document.getElementById('f-vram').value);
+            const vramMb = !isNaN(vramGb) && vramGb > 0 ? Math.round(vramGb * 1024) : undefined;
 
             if (!name || !url) { showToast('Name and URL required', 'error'); return; }
 
@@ -873,7 +903,7 @@ Content-Type: application/json
                 if (mode === 'add') {
                     const body = { name, url, priority };
                     if (modelFilter) body.model_filter = modelFilter;
-                    const res = await fetch('/admin/backends', {
+                    const res = await authFetch('/admin/backends', {
                         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
                     });
                     if (!res.ok) { const t = await res.text(); throw new Error(t); }
@@ -881,8 +911,9 @@ Content-Type: application/json
                 } else {
                     const body = { url, priority };
                     if (modelFilter) body.model_filter = modelFilter;
+                    if (vramMb) body.vram_override_mb = vramMb;
                     const originalName = document.getElementById('modal-original-name').value;
-                    const res = await fetch(`/admin/backends/${originalName}`, {
+                    const res = await authFetch(`/admin/backends/${originalName}`, {
                         method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
                     });
                     if (!res.ok) { const t = await res.text(); throw new Error(t); }
@@ -896,7 +927,7 @@ Content-Type: application/json
         async function removeBackend(name) {
             if (!confirm(`Remove ${name}?`)) return;
             try {
-                const res = await fetch(`/admin/backends/${name}`, { method: 'DELETE' });
+                const res = await authFetch(`/admin/backends/${name}`, { method: 'DELETE' });
                 if (res.ok) { showToast(`Removed ${name}`); refresh(); }
                 else showToast('Failed to remove', 'error');
             } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
@@ -1152,6 +1183,8 @@ Content-Type: application/json
 
         // Initialize
         initCharts();
+        const savedKey = getApiKey();
+        if (savedKey) document.getElementById('api-key-input').value = savedKey;
         refresh();
         updateCharts();
         checkUpdate();
