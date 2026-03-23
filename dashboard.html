@@ -605,8 +605,6 @@ Content-Type: application/json
             <input id="f-url" placeholder="http://100.x.x.x:11434">
             <label for="f-priority">Priority (higher = preferred)</label>
             <input id="f-priority" type="number" value="50" min="1" max="200">
-            <label for="f-default">Default Model</label>
-            <input id="f-default" placeholder="e.g. llama3:8b">
             <label for="f-filter">Model Filter (regex, optional)</label>
             <input id="f-filter" placeholder="e.g. llama|qwen">
 
@@ -705,7 +703,7 @@ Content-Type: application/json
             document.getElementById('f-name').disabled = false;
             document.getElementById('f-url').value = '';
             document.getElementById('f-priority').value = '50';
-            document.getElementById('f-default').value = '';
+
             document.getElementById('f-filter').value = '';
             document.getElementById('model-mgmt').style.display = 'none';
             document.getElementById('modal-overlay').classList.add('active');
@@ -720,7 +718,6 @@ Content-Type: application/json
                 document.getElementById('f-name').disabled = true;
                 document.getElementById('f-url').value = b.url;
                 document.getElementById('f-priority').value = b.priority;
-                document.getElementById('f-default').value = b.default_model || '';
                 document.getElementById('f-filter').value = b.model_filter || '';
                 document.getElementById('model-mgmt').style.display = 'block';
                 document.getElementById('pull-progress').style.display = 'none';
@@ -868,7 +865,6 @@ Content-Type: application/json
             const name = document.getElementById('f-name').value.trim();
             const url = document.getElementById('f-url').value.trim();
             const priority = parseInt(document.getElementById('f-priority').value) || 50;
-            const defaultModel = document.getElementById('f-default').value.trim() || undefined;
             const modelFilter = document.getElementById('f-filter').value.trim() || undefined;
 
             if (!name || !url) { showToast('Name and URL required', 'error'); return; }
@@ -876,7 +872,6 @@ Content-Type: application/json
             try {
                 if (mode === 'add') {
                     const body = { name, url, priority };
-                    if (defaultModel) body.default_model = defaultModel;
                     if (modelFilter) body.model_filter = modelFilter;
                     const res = await fetch('/admin/backends', {
                         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
@@ -885,7 +880,6 @@ Content-Type: application/json
                     showToast(`Added ${name}`);
                 } else {
                     const body = { url, priority };
-                    if (defaultModel) body.default_model = defaultModel;
                     if (modelFilter) body.model_filter = modelFilter;
                     const originalName = document.getElementById('modal-original-name').value;
                     const res = await fetch(`/admin/backends/${originalName}`, {
@@ -913,8 +907,9 @@ Content-Type: application/json
             const isOnline = b.healthy;
             const cls = isOnline ? 'online' : 'offline';
             const current = b.current_model || null;
-            const dflt = b.default_model || null;
-            const modelsMatch = current === dflt;
+            const hotModels = b.hot_models || [];
+            const dflt = hotModels[0] || null;
+            const modelsMatch = current ? hotModels.includes(current) : false;
             const idle = b.idle_seconds || 0;
             const idleThresh = idleTimeout * 60;
             const idlePct = dflt ? Math.min(100, Math.round((idle / idleThresh) * 100)) : 0;
@@ -980,8 +975,8 @@ Content-Type: application/json
                             <span class="model-value ${current ? (modelsMatch ? 'match' : '') : 'none'}">${current || 'None'}</span>
                         </div>
                         <div class="model-row">
-                            <span class="model-label">Default</span>
-                            <span class="model-value" style="color:#94a3b8">${dflt || 'Not set'}</span>
+                            <span class="model-label">Hot Model</span>
+                            <span class="model-value" style="color:#94a3b8">${hotModels.length > 0 ? hotModels.join(', ') : 'None'}</span>
                         </div>
                     </div>
                     ${idleHtml}
