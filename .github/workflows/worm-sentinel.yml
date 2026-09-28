@@ -1,0 +1,63 @@
+name: worm-sentinel
+# Tripwire for the tip-rewrite worm (INC-2026-09-05, variant 9-7829 / A9-7829-2 of 2026-09-26).
+# Branch protection is not available on this plan, so this job scans EVERY branch tip on every
+# push and once a day. A finding on a release branch or on the branch just pushed FAILS the run:
+# do not build or deploy that branch. Findings on other branches are warnings.
+# Remediation: run the clean-worm script on the branch, commit, push (no force-push needed).
+on:
+  push:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan-all-branches:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fail on force-push to a release branch
+        if: ${{ github.event_name == 'push' && github.event.forced && contains(fromJSON('["main","master","staging","prod"]'), github.ref_name) }}
+        run: |
+          echo "::error::FORCE-PUSH to ${{ github.ref_name }} by ${{ github.actor }} (before ${{ github.event.before }} -> after ${{ github.sha }}). Restore from the 'before' sha."
+          exit 1
+
+      - name: Scan every branch tip for worm indicators
+        shell: bash
+        env:
+          PUSHED_REF: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -u; fail=0; other=0
+          git fetch -q --prune origin '+refs/heads/*:refs/remotes/origin/*'
+          is_critical() { case "$1" in main|master|staging|prod) return 0;; esac; [ "$EVENT_NAME" = push ] && [ "$1" = "$PUSHED_REF" ] && return 0; return 1; }
+          flag() { if is_critical "$1"; then echo "::error::[$1] $2"; fail=1; else echo "::warning::[$1] $2"; other=$((other+1)); fi; }
+          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin | grep -v '^origin/HEAD$'); do
+            b="${ref#origin/}"
+            # 1. payload marker (both campaigns) in any tracked text file outside .github
+            if git grep -q -I -e "global\['!'\]=" -e 'global\.i="A9-' -e '_padNcYwam' "$ref" -- . ':(exclude).github' 2>/dev/null; then flag "$b" "payload marker present"; fi
+            # 2. fake font carrier: fa-solid-900.woff2 that is JavaScript text
+            for f in $(git ls-tree -r --name-only "$ref" | grep 'fa-solid-900\.woff2$'); do
+              if git show "$ref:$f" | head -c 12 | grep -q 'global\['; then flag "$b" "fake font payload $f"; fi
+            done
+            # 3. bloated build config (real ones are well under 4 KB)
+            while read -r mode type sha size path; do
+              [ -z "${path:-}" ] && continue
+              [ "$size" -gt 4096 ] && flag "$b" "$path is ${size} bytes - build config files must stay small"
+            done < <(git ls-tree -r -l "$ref" | awk '$5 ~ /(^|\/)(postcss|tailwind|vite|vitest|next|babel|webpack|eslint)\.config\.(js|mjs|cjs|ts)$/')
+            # 4. editor autorun, remote-eval loader, committed .env, worm working files
+            if git show "$ref:.vscode/tasks.json" 2>/dev/null | grep -q -e 'fa-solid-900' -e 'folderOpen'; then flag "$b" ".vscode/tasks.json folderOpen autorun"; fi
+            if git grep -q -e 'atob(process.env' "$ref" -- '*.ts' '*.js' '*.mjs' '*.cjs' 2>/dev/null; then flag "$b" "remote eval loader (atob(process.env...))"; fi
+            if git ls-tree --name-only "$ref" | grep -qx '.env'; then flag "$b" ".env is tracked"; fi
+            if git ls-tree -r --name-only "$ref" | grep -Eq '(^|/)(config\.bat|temp_auto_push\.bat|temp_interactive_push\.bat|branch_structure\.json)$'; then flag "$b" "worm working file tracked"; fi
+            if git show "$ref:.gitignore" 2>/dev/null | grep -Eq '^(config\.bat|temp_auto_push|temp_interactive_push|branch_structure)'; then flag "$b" ".gitignore carries worm entries"; fi
+          done
+          [ "$other" -gt 0 ] && echo "::notice::$other finding(s) on non-release branches"
+          [ "$EVENT_NAME" != push ] && [ "$other" -gt 0 ] && fail=1
+          exit $fail
