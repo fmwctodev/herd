@@ -7,3 +7,9 @@
 *.swo
 *~
 .env
+
+# env files: never commit secrets (only the *.example/*.sample/*.template stubs)
+.env.*
+!.env.example
+!.env.sample
+!.env.template
